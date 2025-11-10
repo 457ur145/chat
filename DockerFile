@@ -1,0 +1,59 @@
+# Usamos una imagen oficial de PHP con Apache
+FROM php:8.2-apache
+
+# Establecemos el límite de memoria para PHP y Composer para evitar fallos
+RUN echo "memory_limit=512M" > /usr/local/etc/php/conf.d/custom-memory.ini
+
+# Instalamos dependencias del sistema
+RUN apt-get update && apt-get install -y \
+    libzip-dev \
+    libpng-dev \
+    libjpeg62-turbo-dev \
+    libfreetype6-dev \
+    locales \
+    zip \
+    unzip \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Instalamos extensiones de PHP necesarias para Flarum
+RUN docker-php-ext-configure gd --with-freetype --with-jpeg \
+    && docker-php-ext-install -j$(nproc) \
+    gd \
+    pdo_mysql \
+    zip \
+    bcmath \
+    intl
+
+# Instalamos Composer
+COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
+
+# Habilitamos el modulo rewrite de Apache para las URLs amigables
+RUN a2enmod rewrite
+
+# Establecemos el directorio de trabajo
+WORKDIR /var/www/html
+
+# Copiamos solo los ficheros de composer primero para aprovechar la caché de Docker
+COPY composer.json composer.lock ./
+
+# Instalamos dependencias de Composer
+# --no-dev: para no instalar dependencias de desarrollo
+# --no-scripts: para evitar que se ejecuten scripts que puedan fallar en el entorno de build
+# --optimize-autoloader: para mejor rendimiento
+RUN composer install --no-dev --no-scripts --optimize-autoloader
+
+# Copiamos todo el código de la aplicación
+COPY . .
+
+# Ejecutamos los scripts de Composer ahora que todo el código está en su sitio
+RUN composer run-script post-install-cmd
+
+# Damos los permisos correctos al servidor web
+RUN chown -R www-data:www-data /var/www/html \
+    && chmod -R 755 /var/www/html \
+    && chmod -R 775 /var/www/html/storage \
+    && chmod -R 775 /var/www/html/assets
+
+# Exponemos el puerto 80 (Apache)
+EXPOSE 80
